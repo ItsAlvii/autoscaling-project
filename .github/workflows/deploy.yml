@@ -1,0 +1,41 @@
+name: Deploy to EC2 instances
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Deploy to Instance 1 and Instance 2
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.INSTANCE1_HOST }}
+          username: ubuntu
+          key: ${{ secrets.INSTANCE1_SSH_KEY }}
+          script: |
+            echo "🟢 Pulling latest code on Instance 1..."
+            cd ~/project-autoscale
+            git pull origin main || true
+
+            echo "🟡 Rebuilding Docker on Instance 1..."
+            docker-compose down
+            docker-compose up -d --build
+
+            echo "🟢 Syncing to Instance 2..."
+            rsync -avz -e "ssh -o StrictHostKeyChecking=no" ~/project-autoscale/ ubuntu@${{ secrets.INSTANCE2_HOST }}:~/project-autoscale/
+
+            ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.INSTANCE2_HOST }} << 'EOF'
+              echo "🟡 Rebuilding Docker on Instance 2..."
+              cd ~/project-autoscale
+              docker-compose down
+              docker-compose up -d --build
+              echo "✅ Deployment done on Instance 2"
+            EOF
+
