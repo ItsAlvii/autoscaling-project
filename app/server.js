@@ -5,7 +5,7 @@ const app = express();
 const PORT = 8080;
 
 app.get("/", (req, res) => {
-  res.send("Server is running inside Docker on port 8080 🚀");
+  res.send("Server is running inside Docker on port 8080 🚀. This is version 2");
 });
 
 app.listen(PORT, () => {
