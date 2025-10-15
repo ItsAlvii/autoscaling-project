@@ -9,6 +9,13 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    env:
+      AWS_REGION: us-east-1
+      ASG_NAME: project-autoscale-asg
+      LAUNCH_TEMPLATE_NAME: project-autoscale-template
+      DOCKER_IMAGE: your-dockerhub-username/project-name
+      VERSION: v${{ github.run_number }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,33 +31,46 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
-          docker build -t $IMAGE_NAME .
-          docker push $IMAGE_NAME
+          docker build -t $DOCKER_IMAGE:$VERSION .
+          docker push $DOCKER_IMAGE:$VERSION
 
-      # === Deploy to Instance 1 ===
-      - name: Deploy to Instance 1
-        uses: appleboy/ssh-action@v1.1.0
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.INSTANCE1_HOST }}
-          username: ubuntu
-          key: ${{ secrets.INSTANCE1_SSH_KEY }}
-          script: |
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
-            sudo docker stop project-autoscale || true
-            sudo docker rm project-autoscale || true
-            sudo docker run -d --name project-autoscale -p 80:80 ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      # === Deploy to Instance 2 ===
-      - name: Deploy to Instance 2
-        uses: appleboy/ssh-action@v1.1.0
-        with:
-          host: ${{ secrets.INSTANCE2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.INSTANCE1_SSH_KEY }}
-          script: |
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
-            sudo docker stop project-autoscale || true
-            sudo docker rm project-autoscale || true
-            sudo docker run -d --name project-autoscale -p 80:80 ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
+      - name: Create new Launch Template version
+        run: |
+          USER_DATA=$(base64 -w 0 <<EOF
+          #!/bin/bash
+          docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+          docker pull $DOCKER_IMAGE:$VERSION
+          docker run -d -p 8080:8080 $DOCKER_IMAGE:$VERSION
+          EOF
+          )
+
+          aws ec2 create-launch-template-version \
+            --launch-template-name $LAUNCH_TEMPLATE_NAME \
+            --source-version 1 \
+            --version-description "GitHub Actions deploy $VERSION" \
+            --launch-template-data "{\"UserData\":\"$USER_DATA\"}"
+
+      - name: Update Auto Scaling Group to use latest version
+        run: |
+          LATEST_VERSION=$(aws ec2 describe-launch-template-versions \
+            --launch-template-name $LAUNCH_TEMPLATE_NAME \
+            --query 'LaunchTemplateVersions[-1].VersionNumber' \
+            --output text)
+
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name $ASG_NAME \
+            --launch-template \"LaunchTemplateName=$LAUNCH_TEMPLATE_NAME,Version=$LATEST_VERSION\"
+
+      - name: Start Instance Refresh (optional, triggers rolling update)
+        run: |
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $ASG_NAME \
+            --preferences MinHealthyPercentage=50
 
