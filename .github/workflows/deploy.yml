@@ -13,7 +13,7 @@ jobs:
       AWS_REGION: us-east-1
       ASG_NAME: project-autoscale-asg
       LAUNCH_TEMPLATE_NAME: project-autoscale-template
-      DOCKER_IMAGE: your-dockerhub-username/project-name
+      DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/project-name
       VERSION: v${{ github.run_number }}
 
     steps:
@@ -44,11 +44,13 @@ jobs:
       - name: Create new Launch Template version
         run: |
           USER_DATA=$(base64 -w 0 <<EOF
-          #!/bin/bash
-          docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
-          docker pull $DOCKER_IMAGE:$VERSION
-          docker run -d -p 8080:8080 $DOCKER_IMAGE:$VERSION
-          EOF
+#!/bin/bash
+docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+docker pull $DOCKER_IMAGE:$VERSION
+docker stop $(docker ps -aq) || true
+docker rm $(docker ps -aq) || true
+docker run -d -p 8080:8080 $DOCKER_IMAGE:$VERSION
+EOF
           )
 
           aws ec2 create-launch-template-version \
@@ -57,7 +59,7 @@ jobs:
             --version-description "GitHub Actions deploy $VERSION" \
             --launch-template-data "{\"UserData\":\"$USER_DATA\"}"
 
-      - name: Update Auto Scaling Group to use latest version
+      - name: Update Auto Scaling Group to use latest Launch Template version
         run: |
           LATEST_VERSION=$(aws ec2 describe-launch-template-versions \
             --launch-template-name $LAUNCH_TEMPLATE_NAME \
@@ -66,9 +68,9 @@ jobs:
 
           aws autoscaling update-auto-scaling-group \
             --auto-scaling-group-name $ASG_NAME \
-            --launch-template \"LaunchTemplateName=$LAUNCH_TEMPLATE_NAME,Version=$LATEST_VERSION\"
+            --launch-template "LaunchTemplateName=$LAUNCH_TEMPLATE_NAME,Version=$LATEST_VERSION"
 
-      - name: Start Instance Refresh (optional, triggers rolling update)
+      - name: Start rolling update via Instance Refresh
         run: |
           aws autoscaling start-instance-refresh \
             --auto-scaling-group-name $ASG_NAME \
