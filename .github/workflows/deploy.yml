@@ -13,6 +13,7 @@ jobs:
       AWS_REGION: us-east-1
       ASG_NAME: project-autoscale-asg
       LAUNCH_TEMPLATE_NAME: project-autoscale-template
+      GOLDEN_INSTANCE_ID: i-0485e0a0de93b1909  # instance with latest code
       DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/project-name
       VERSION: v${{ github.run_number }}
 
@@ -41,31 +42,34 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Create new Launch Template version
+      - name: Create new AMI from golden instance
+        id: create_ami
         run: |
-          USER_DATA=$(base64 -w 0 <<EOF
-#!/bin/bash
-docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
-docker pull $DOCKER_IMAGE:$VERSION
-docker stop $(docker ps -aq) || true
-docker rm $(docker ps -aq) || true
-docker run -d -p 8080:8080 $DOCKER_IMAGE:$VERSION
-EOF
-          )
+          AMI_NAME="project-autoscale-${VERSION}-$(date +%Y%m%d%H%M%S)"
+          AMI_ID=$(aws ec2 create-image \
+            --instance-id $GOLDEN_INSTANCE_ID \
+            --name "$AMI_NAME" \
+            --no-reboot \
+            --query "ImageId" \
+            --output text)
+          echo "AMI_ID=$AMI_ID" >> $GITHUB_ENV
+          echo "Waiting for AMI to become available..."
+          aws ec2 wait image-available --image-ids $AMI_ID
+          echo "AMI $AMI_ID is now available."
 
-          aws ec2 create-launch-template-version \
+      - name: Create new Launch Template version with new AMI
+        run: |
+          LATEST_VERSION=$(aws ec2 create-launch-template-version \
             --launch-template-name $LAUNCH_TEMPLATE_NAME \
             --source-version 1 \
             --version-description "GitHub Actions deploy $VERSION" \
-            --launch-template-data "{\"UserData\":\"$USER_DATA\"}"
+            --launch-template-data "{\"ImageId\":\"${{ env.AMI_ID }}\"}" \
+            --query 'LaunchTemplateVersion.VersionNumber' \
+            --output text)
+          echo "New launch template version $LATEST_VERSION created with AMI ${{ env.AMI_ID }}"
 
       - name: Update Auto Scaling Group to use latest Launch Template version
         run: |
-          LATEST_VERSION=$(aws ec2 describe-launch-template-versions \
-            --launch-template-name $LAUNCH_TEMPLATE_NAME \
-            --query 'LaunchTemplateVersions[-1].VersionNumber' \
-            --output text)
-
           aws autoscaling update-auto-scaling-group \
             --auto-scaling-group-name $ASG_NAME \
             --launch-template "LaunchTemplateName=$LAUNCH_TEMPLATE_NAME,Version=$LATEST_VERSION"
