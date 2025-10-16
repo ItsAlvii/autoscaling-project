@@ -1,4 +1,4 @@
-name: Deploy to EC2 (AutoScaling)
+name: Build and Push Docker Image
 
 on:
   push:
@@ -6,19 +6,11 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  docker-build-push:
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: us-east-1
-      ASG_NAME: project-autoscale-asg
-      LAUNCH_TEMPLATE_NAME: project-autoscale-template
-      GOLDEN_INSTANCE_ID: i-0485e0a0de93b1909  # instance with latest code
-      DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/project-name
-      VERSION: v${{ github.run_number }}
-
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
@@ -31,52 +23,9 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker image
+        env:
+          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
         run: |
-          docker build -t $DOCKER_IMAGE:$VERSION .
-          docker push $DOCKER_IMAGE:$VERSION
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Create new AMI from golden instance
-        id: create_ami
-        run: |
-          AMI_NAME="project-autoscale-${VERSION}-$(date +%Y%m%d%H%M%S)"
-          AMI_ID=$(aws ec2 create-image \
-            --instance-id $GOLDEN_INSTANCE_ID \
-            --name "$AMI_NAME" \
-            --no-reboot \
-            --query "ImageId" \
-            --output text)
-          echo "AMI_ID=$AMI_ID" >> $GITHUB_ENV
-          echo "Waiting for AMI to become available..."
-          aws ec2 wait image-available --image-ids $AMI_ID
-          echo "AMI $AMI_ID is now available."
-
-      - name: Create new Launch Template version with new AMI
-        run: |
-          LATEST_VERSION=$(aws ec2 create-launch-template-version \
-            --launch-template-name $LAUNCH_TEMPLATE_NAME \
-            --source-version 1 \
-            --version-description "GitHub Actions deploy $VERSION" \
-            --launch-template-data "{\"ImageId\":\"${{ env.AMI_ID }}\"}" \
-            --query 'LaunchTemplateVersion.VersionNumber' \
-            --output text)
-          echo "New launch template version $LATEST_VERSION created with AMI ${{ env.AMI_ID }}"
-
-      - name: Update Auto Scaling Group to use latest Launch Template version
-        run: |
-          aws autoscaling update-auto-scaling-group \
-            --auto-scaling-group-name $ASG_NAME \
-            --launch-template "LaunchTemplateName=$LAUNCH_TEMPLATE_NAME,Version=$LATEST_VERSION"
-
-      - name: Start rolling update via Instance Refresh
-        run: |
-          aws autoscaling start-instance-refresh \
-            --auto-scaling-group-name $ASG_NAME \
-            --preferences MinHealthyPercentage=50
+          docker build --no-cache -t $IMAGE_NAME:latest .
+          docker push $IMAGE_NAME:latest
 
