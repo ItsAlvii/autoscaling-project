@@ -34,13 +34,21 @@ jobs:
     needs: docker-build-push
 
     steps:
-      - name: Checkout (for run context)
+      - name: Checkout (for context)
         uses: actions/checkout@v4
 
-      - name: Debug: check AWS secrets available
+      - name: Debug - Check AWS secrets available
         run: |
-          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then echo "AWS_ACCESS_KEY_ID: MISSING"; else echo "AWS_ACCESS_KEY_ID: FOUND"; fi
-          if [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then echo "AWS_SECRET_ACCESS_KEY: MISSING"; else echo "AWS_SECRET_ACCESS_KEY: FOUND"; fi
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then 
+            echo "AWS_ACCESS_KEY_ID: MISSING"; 
+          else 
+            echo "AWS_ACCESS_KEY_ID: FOUND"; 
+          fi
+          if [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then 
+            echo "AWS_SECRET_ACCESS_KEY: MISSING"; 
+          else 
+            echo "AWS_SECRET_ACCESS_KEY: FOUND"; 
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -56,19 +64,19 @@ jobs:
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --targets "Key=tag:Name,Values=project-autoscale" \
-            --comment "Pull latest Docker image and restart app container cleanly" \
+            --comment "Clean Docker redeploy from GitHub Actions" \
             --parameters '{
               "commands":[
-                "echo Stopping old container if exists...",
+                "echo Stopping old container...",
                 "sudo docker stop project-autoscale || true",
                 "sudo docker rm -f project-autoscale || true",
-                "echo Pruning old Docker data...",
+                "echo Pruning old images and cache...",
                 "sudo docker system prune -af --volumes || true",
-                "echo Pulling latest image...",
+                "echo Pulling latest image from DockerHub...",
                 "sudo docker pull '"$IMAGE_NAME"'",
                 "echo Starting new container...",
                 "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'",
-                "echo Deployment complete."
+                "echo ✅ Deployment complete."
               ]
             }' \
             --timeout-seconds 600 \
