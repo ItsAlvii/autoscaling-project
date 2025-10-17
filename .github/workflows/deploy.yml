@@ -1,4 +1,4 @@
-name: Build, Push, and Deploy via SSM
+name: Full Build, Push, and Multi-Instance Deploy
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           docker build --no-cache -t $IMAGE_NAME:latest .
           docker push $IMAGE_NAME:latest
 
-  update-ec2:
+  deploy-all:
     runs-on: ubuntu-latest
     needs: docker-build-push
 
@@ -42,27 +42,32 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Deploy new container via SSM
+      - name: Deploy to all EC2s (tag: project-autoscale)
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
         run: |
-          echo "Deploying new container..."
+          echo "Deploying new image to all instances tagged project-autoscale..."
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
-            --targets "Key=InstanceIds,Values=i-0174836755f9caf9d" \
-            --comment "Pull latest Docker image and restart app container" \
+            --targets "Key=tag:Name,Values=project-autoscale" \
+            --comment "Redeploying latest Docker image across all instances" \
             --parameters '{
               "commands": [
-                "sudo docker stop project-autoscale || true",
-                "sudo docker rm -f project-autoscale || true",
+                "echo Stopping old containers...",
+                "sudo docker stop $(sudo docker ps -q) || true",
+                "echo Removing old containers...",
+                "sudo docker rm -f $(sudo docker ps -aq) || true",
+                "echo Removing all old images...",
                 "sudo docker image prune -af || true",
-                "sudo docker container prune -f || true",
                 "sudo docker rmi -f $(sudo docker images -aq) || true",
+                "echo Pulling new image...",
                 "sudo docker pull '"$IMAGE_NAME"'",
-                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'"
+                "echo Running new container...",
+                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'",
+                "echo Deployment done"
               ]
             }' \
-            --timeout-seconds 600 \
+            --timeout-seconds 900 \
             --max-concurrency "100%" \
             --max-errors "0"
 
