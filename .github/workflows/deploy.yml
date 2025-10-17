@@ -8,6 +8,7 @@ on:
 jobs:
   docker-build-push:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,13 +25,16 @@ jobs:
       - name: Build and push Docker image
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build --no-cache -t $IMAGE_NAME:latest .
-          docker push $IMAGE_NAME:latest
+          echo "Building Docker image with tag $IMAGE_TAG"
+          docker build --no-cache -t $IMAGE_NAME:$IMAGE_TAG .
+          docker push $IMAGE_NAME:$IMAGE_TAG
 
   update-ec2:
     runs-on: ubuntu-latest
     needs: docker-build-push
+
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -39,20 +43,22 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Pull new Docker image and restart containers on instances
+      - name: Deploy Docker image via SSM
         env:
-          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
+          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
+          IMAGE_TAG: ${{ github.sha }}
         run: |
+          echo "Sending SSM command to update all instances with tag $IMAGE_TAG"
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --targets "Key=tag:Name,Values=project-autoscale" \
-            --comment "Pull latest Docker image and restart app container" \
+            --comment "Pull Docker image $IMAGE_TAG and restart container" \
             --parameters '{
-              "commands": [
-                "sudo docker ps -q --filter name=project-autoscale | xargs -r sudo docker rm -f",
-                "sudo docker images -q '"$IMAGE_NAME"' | xargs -r sudo docker rmi -f",
-                "sudo docker pull '"$IMAGE_NAME"'",
-                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'"
+              "commands":[
+                "sudo docker rm -f project-autoscale || true",
+                "sudo docker image rm -f '"$IMAGE_NAME:$IMAGE_TAG"' || true",
+                "sudo docker pull '"$IMAGE_NAME:$IMAGE_TAG"'",
+                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME:$IMAGE_TAG"'"
               ]
             }' \
             --timeout-seconds 600 \
