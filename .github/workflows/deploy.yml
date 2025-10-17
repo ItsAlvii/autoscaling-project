@@ -1,4 +1,4 @@
-name: Full Build, Push, and Multi-Instance Deploy
+name: Build, Push, and Deploy via SSM
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 jobs:
   docker-build-push:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,18 +21,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image (no cache)
+      - name: Build and push Docker image
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
         run: |
-          docker builder prune -af || true
           docker build --no-cache -t $IMAGE_NAME:latest .
           docker push $IMAGE_NAME:latest
 
-  deploy-all:
+  update-ec2:
     runs-on: ubuntu-latest
     needs: docker-build-push
-
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -42,32 +39,23 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Deploy to all EC2s (tag: project-autoscale)
+      - name: Pull new Docker image and restart containers on instances
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
         run: |
-          echo "Deploying new image to all instances tagged project-autoscale..."
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --targets "Key=tag:Name,Values=project-autoscale" \
-            --comment "Redeploying latest Docker image across all instances" \
+            --comment "Pull latest Docker image and restart app container" \
             --parameters '{
               "commands": [
-                "echo Stopping old containers...",
-                "sudo docker stop $(sudo docker ps -q) || true",
-                "echo Removing old containers...",
-                "sudo docker rm -f $(sudo docker ps -aq) || true",
-                "echo Removing all old images...",
-                "sudo docker image prune -af || true",
-                "sudo docker rmi -f $(sudo docker images -aq) || true",
-                "echo Pulling new image...",
+                "sudo docker ps -q --filter name=project-autoscale | xargs -r sudo docker rm -f",
+                "sudo docker images -q '"$IMAGE_NAME"' | xargs -r sudo docker rmi -f",
                 "sudo docker pull '"$IMAGE_NAME"'",
-                "echo Running new container...",
-                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'",
-                "echo Deployment done"
+                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'"
               ]
             }' \
-            --timeout-seconds 900 \
+            --timeout-seconds 600 \
             --max-concurrency "100%" \
             --max-errors "0"
 
