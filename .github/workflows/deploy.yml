@@ -1,4 +1,4 @@
-name: Build, Push, and Deploy via SSM
+name: Deploy to EC2 (AutoScaling + Instance1)
 
 on:
   push:
@@ -6,11 +6,18 @@ on:
       - main
 
 jobs:
-  docker-build-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
+    env:
+      AWS_REGION: us-east-1
+      ASG_NAME: project-autoscale-asg
+      EC2_TAG_KEY: name
+      EC2_TAG_VALUE: project-autoscale
+      DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/autoscaing-project:latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
@@ -22,42 +29,42 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        env:
-          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
+      - name: Build and push Docker image (no cache)
         run: |
-          docker build --no-cache -t $IMAGE_NAME:latest .
-          docker push $IMAGE_NAME:latest
+          docker system prune -af
+          docker build --no-cache -t $DOCKER_IMAGE .
+          docker push $DOCKER_IMAGE
 
-  update-ec2:
-    runs-on: ubuntu-latest
-    needs: docker-build-push
-
-    steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-ec2-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Send SSM command to update running instances
-        env:
-          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
+      - name: Get EC2 instance IDs (Instance1 + ASG instances)
+        id: get-ec2
         run: |
-          aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:Name,Values=project-autoscale" \
-            --comment "Pull latest Docker image and restart app container" \
-            --parameters '{
-              "commands":[
-                "sudo docker rm -f project-autoscale || true",
-                "sudo docker image rm -f '"$IMAGE_NAME"' || true",
-                "sudo docker pull '"$IMAGE_NAME"'",
-                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'"
-              ]
-            }' \
-            --timeout-seconds 600 \
-            --max-concurrency "100%" \
-            --max-errors "0"
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:${EC2_TAG_KEY},Values=${EC2_TAG_VALUE}" "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].InstanceId" \
+            --output text)
+          echo "INSTANCE_IDS=$INSTANCE_IDS" >> $GITHUB_ENV
+
+      - name: Redeploy Docker container on EC2 instances
+        run: |
+          for id in $INSTANCE_IDS; do
+            echo "Deploying to EC2 instance: $id"
+            aws ssm send-command \
+              --instance-ids "$id" \
+              --document-name "AWS-RunShellScript" \
+              --comment "Redeploy latest Docker container" \
+              --parameters 'commands=[
+                "sudo docker stop app || true",
+                "sudo docker rm app || true",
+                "sudo docker system prune -af || true",
+                "sudo docker pull '${DOCKER_IMAGE}'",
+                "sudo docker run -d --name app -p 80:80 '${DOCKER_IMAGE}'"
+              ]' \
+              --region $AWS_REGION > /dev/null
+          done
 
