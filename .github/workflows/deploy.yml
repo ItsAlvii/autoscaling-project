@@ -26,6 +26,7 @@ jobs:
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
         run: |
+          docker builder prune -af || true
           docker build --no-cache -t $IMAGE_NAME:latest .
           docker push $IMAGE_NAME:latest
 
@@ -34,22 +35,6 @@ jobs:
     needs: docker-build-push
 
     steps:
-      - name: Checkout (for context)
-        uses: actions/checkout@v4
-
-      - name: Debug - Check AWS secrets available
-        run: |
-          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then 
-            echo "AWS_ACCESS_KEY_ID: MISSING"; 
-          else 
-            echo "AWS_ACCESS_KEY_ID: FOUND"; 
-          fi
-          if [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then 
-            echo "AWS_SECRET_ACCESS_KEY: MISSING"; 
-          else 
-            echo "AWS_SECRET_ACCESS_KEY: FOUND"; 
-          fi
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -57,26 +42,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Send SSM command to update running instances (clean redeploy)
+      - name: Deploy new container via SSM
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale:latest
         run: |
+          echo "Deploying new container..."
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:Name,Values=project-autoscale" \
-            --comment "Clean Docker redeploy from GitHub Actions" \
+            --targets "Key=InstanceIds,Values=i-0174836755f9caf9d" \
+            --comment "Pull latest Docker image and restart app container" \
             --parameters '{
-              "commands":[
-                "echo Stopping old container...",
+              "commands": [
                 "sudo docker stop project-autoscale || true",
                 "sudo docker rm -f project-autoscale || true",
-                "echo Pruning old images and cache...",
-                "sudo docker system prune -af --volumes || true",
-                "echo Pulling latest image from DockerHub...",
+                "sudo docker image prune -af || true",
+                "sudo docker container prune -f || true",
+                "sudo docker rmi -f $(sudo docker images -aq) || true",
                 "sudo docker pull '"$IMAGE_NAME"'",
-                "echo Starting new container...",
-                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'",
-                "echo ✅ Deployment complete."
+                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME"'"
               ]
             }' \
             --timeout-seconds 600 \
