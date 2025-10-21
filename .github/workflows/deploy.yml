@@ -1,4 +1,4 @@
-name: Build, Push, and Deploy via SSM
+name: Build, Push, and Deploy via CodeDeploy
 
 on:
   push:
@@ -6,13 +6,14 @@ on:
       - main
 
 jobs:
-  docker-build-push:
+  build-push-deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Build and push Docker image to Docker Hub
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -25,17 +26,11 @@ jobs:
       - name: Build and push Docker image
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "Building Docker image with tag $IMAGE_TAG"
-          docker build --no-cache -t $IMAGE_NAME:$IMAGE_TAG .
-          docker push $IMAGE_NAME:$IMAGE_TAG
+          docker build -t $IMAGE_NAME:latest .
+          docker push $IMAGE_NAME:latest
 
-  update-ec2:
-    runs-on: ubuntu-latest
-    needs: docker-build-push
-
-    steps:
+      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -43,25 +38,22 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Deploy Docker image via SSM
-        env:
-          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
-          IMAGE_TAG: ${{ github.sha }}
+      # Create deployment bundle (zip)
+      - name: Create deployment bundle
         run: |
-          echo "Sending SSM command to update all instances with tag $IMAGE_TAG"
-          aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:Name,Values=project-autoscale" \
-            --comment "Pull Docker image $IMAGE_TAG and restart container" \
-            --parameters '{
-              "commands":[
-                "sudo docker rm -f project-autoscale || true",
-                "sudo docker image rm -f '"$IMAGE_NAME:$IMAGE_TAG"' || true",
-                "sudo docker pull '"$IMAGE_NAME:$IMAGE_TAG"'",
-                "sudo docker run -d --name project-autoscale -p 8080:8080 --restart=always '"$IMAGE_NAME:$IMAGE_TAG"'"
-              ]
-            }' \
-            --timeout-seconds 600 \
-            --max-concurrency "100%" \
-            --max-errors "0"
+          zip -r deploy.zip appspec.yml scripts/ Dockerfile
+
+      # Upload to S3
+      - name: Upload bundle to S3
+        run: |
+          aws s3 cp deploy.zip s3://autoscale-codedeploy-bucket/deploy.zip
+
+      # Trigger CodeDeploy deployment
+      - name: Deploy to EC2 via CodeDeploy
+        run: |
+          aws deploy create-deployment \
+            --application-name autoscale-app \
+            --deployment-group-name autoscale-deployment-group \
+            --s3-location bucket=autoscale-codedeploy-bucket,key=deploy.zip,bundleType=zip \
+            --region us-east-1
 
