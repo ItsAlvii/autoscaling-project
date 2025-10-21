@@ -53,7 +53,7 @@ jobs:
         run: |
           aws deploy create-deployment \
             --application-name autoscale-app \
-            --deployment-group-name autoscale-deployment-group \
+            --deployment-group-name project-autoscale-dg-new \
             --s3-location bucket=autoscale-codedeploy-bucket,key=deploy.zip,bundleType=zip \
             --region us-east-1
 
