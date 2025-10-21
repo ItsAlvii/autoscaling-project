@@ -4,6 +4,7 @@ import os from "os";
 
 const app = express();
 const PORT = 8080;
+const HOST = "0.0.0.0"; // <-- bind to all interfaces
 const hostname = os.hostname();
 
 // Generate a random ID once when the container starts
@@ -17,7 +18,7 @@ app.get("/", (req, res) => {
   `);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}, instance ID: ${instanceID}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Server is running on ${HOST}:${PORT}, instance ID: ${instanceID}`);
 });
 
