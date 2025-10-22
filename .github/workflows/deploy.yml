@@ -38,14 +38,12 @@ jobs:
           docker push $IMAGE_NAME:latest
           echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > deploy_env.sh
 
-      # 5️⃣ Configure AWS credentials and assume CodeDeploy role
-      - name: Configure AWS credentials for CodeDeploy
+      # 5️⃣ Configure AWS credentials (directly)
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          role-to-assume: arn:aws:iam::884234864882:role/AWSCodeDeployRole
-          role-session-name: gha-codedeploy
           aws-region: us-east-1
 
       # 6️⃣ Trigger CodeDeploy deployment
@@ -57,7 +55,7 @@ jobs:
             --deployment-group-name project-autoscale-dg-new \
             --github-location repository=${{ github.repository }},commitId=${{ github.sha }}
 
-      # 7️⃣ Log deployment initiation
+      # 7️⃣ Log deployment
       - name: Log deployment
         run: echo "✅ Deployment triggered — ASG instances will pull the latest Docker image on startup."
 
