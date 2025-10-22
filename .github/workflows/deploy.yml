@@ -27,8 +27,16 @@ jobs:
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
         run: |
-          docker build -t $IMAGE_NAME:latest .
+          IMAGE_TAG=${{ github.sha }}
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+          docker push $IMAGE_NAME:$IMAGE_TAG
+          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
           docker push $IMAGE_NAME:latest
+
+      # Create env file with SHA tag
+      - name: Create deploy env file
+        run: |
+          echo "DEPLOY_IMAGE_TAG=${{ github.sha }}" > scripts/deploy_env.sh
 
       # Configure AWS credentials
       - name: Configure AWS credentials
@@ -41,7 +49,7 @@ jobs:
       # Create deployment bundle (zip)
       - name: Create deployment bundle
         run: |
-          zip -r deploy.zip appspec.yml scripts/ Dockerfile
+          zip -r deploy.zip appspec.yml scripts/
 
       # Upload to S3
       - name: Upload bundle to S3
