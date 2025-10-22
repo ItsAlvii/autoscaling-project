@@ -38,7 +38,7 @@ jobs:
           docker push $IMAGE_NAME:latest
           echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > deploy_env.sh
 
-      # Configure AWS credentials (for AutoScaling + CodeDeploy)
+      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -46,15 +46,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # CodeDeploy deployment (optional, for app logic updates)
+      # Trigger AWS CodeDeploy deployment
       - name: Trigger CodeDeploy deployment
         run: |
           aws deploy create-deployment \
-            --application-name project-autoscale-app \
-            --deployment-group-name project-autoscale-dg \
+            --application-name autoscale-app \
+            --deployment-group-name project-autoscale-dg-new \
             --github-location repository=${{ github.repository }},commitId=${{ github.sha }}
 
-      # Safe instance refresh in Auto Scaling Group
+      # Trigger Auto Scaling Group instance refresh
       - name: Trigger Auto Scaling Group instance refresh
         run: |
           ASG_NAME="project-autoscale-asg"
