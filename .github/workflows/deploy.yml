@@ -38,12 +38,14 @@ jobs:
           docker push $IMAGE_NAME:latest
           echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > deploy_env.sh
 
-      # 5️⃣ Configure AWS credentials (CodeDeploy + Auto Scaling)
-      - name: Configure AWS credentials
+      # 5️⃣ Configure AWS credentials and assume CodeDeploy role
+      - name: Configure AWS credentials for CodeDeploy
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::884234864882:role/AWSCodeDeployRole
+          role-session-name: gha-codedeploy
           aws-region: us-east-1
 
       # 6️⃣ Trigger CodeDeploy deployment
@@ -55,27 +57,7 @@ jobs:
             --deployment-group-name project-autoscale-dg-new \
             --github-location repository=${{ github.repository }},commitId=${{ github.sha }}
 
-      # 7️⃣ Trigger Auto Scaling Group instance refresh
-      - name: Trigger Auto Scaling Group instance refresh
-        run: |
-          ASG_NAME="project-autoscale-asg"
-          echo "Checking for active instance refresh on ASG: $ASG_NAME..."
-          REFRESH_STATUS=$(aws autoscaling describe-instance-refreshes \
-            --auto-scaling-group-name $ASG_NAME \
-            --query 'InstanceRefreshes[0].Status' \
-            --output text)
-
-          if [ "$REFRESH_STATUS" = "InProgress" ]; then
-            echo "⚠️ Instance refresh already in progress — skipping."
-          else
-            echo "Starting new instance refresh..."
-            aws autoscaling start-instance-refresh \
-              --auto-scaling-group-name $ASG_NAME \
-              --strategy Rolling \
-              --preferences '{"MinHealthyPercentage": 100, "InstanceWarmup": 300}'
-          fi
-
-      # 8️⃣ Log rollout initiation
-      - name: Log rollout initiation
-        run: echo "✅ Deployment triggered — new instances will pull the latest Docker image on startup."
+      # 7️⃣ Log deployment initiation
+      - name: Log deployment
+        run: echo "✅ Deployment triggered — ASG instances will pull the latest Docker image on startup."
 
