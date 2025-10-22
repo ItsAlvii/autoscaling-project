@@ -38,7 +38,7 @@ jobs:
           docker push $IMAGE_NAME:latest
           echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > deploy_env.sh
 
-      # Configure AWS credentials (to refresh ASG instances)
+      # Configure AWS credentials (for AutoScaling + CodeDeploy)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -46,17 +46,35 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # Trigger instance refresh in Auto Scaling Group
+      # CodeDeploy deployment (optional, for app logic updates)
+      - name: Trigger CodeDeploy deployment
+        run: |
+          aws deploy create-deployment \
+            --application-name project-autoscale-app \
+            --deployment-group-name project-autoscale-dg \
+            --github-location repository=${{ github.repository }},commitId=${{ github.sha }}
+
+      # Safe instance refresh in Auto Scaling Group
       - name: Trigger Auto Scaling Group instance refresh
         run: |
-          aws autoscaling start-instance-refresh \
-            --auto-scaling-group-name project-autoscale-asg \
-            --strategy Rolling \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}' \
-            --region us-east-1
+          ASG_NAME="project-autoscale-asg"
+          echo "Checking for active instance refresh..."
+          REFRESH_STATUS=$(aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name $ASG_NAME \
+            --query 'InstanceRefreshes[0].Status' \
+            --output text)
+
+          if [ "$REFRESH_STATUS" = "InProgress" ]; then
+            echo "⚠️ Instance refresh already in progress, skipping new refresh."
+          else
+            echo "Starting new instance refresh..."
+            aws autoscaling start-instance-refresh \
+              --auto-scaling-group-name $ASG_NAME \
+              --strategy Rolling \
+              --preferences '{"MinHealthyPercentage": 100, "InstanceWarmup": 300}'
+          fi
 
       # Confirm rollout
       - name: Log rollout initiation
-        run: echo "✅ Deployment triggered — new instances will pull latest Docker image on startup"
-
+        run: echo "✅ Deployment triggered — new instances will pull the latest Docker image on startup."
 
