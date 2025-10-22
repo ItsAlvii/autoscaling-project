@@ -1,4 +1,4 @@
-name: Build, Push, and Deploy via CodeDeploy
+name: Build, Push, and Deploy via AutoScaling
 
 on:
   push:
@@ -10,35 +10,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Build and push Docker image to Docker Hub
+      # Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Build and push Docker image
       - name: Build and push Docker image
         env:
           IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
         run: |
           IMAGE_TAG=${{ github.sha }}
+          echo "Building Docker image with tag: $IMAGE_TAG"
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
           docker push $IMAGE_NAME:$IMAGE_TAG
           docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
           docker push $IMAGE_NAME:latest
+          echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > deploy_env.sh
 
-      # Create env file with SHA tag
-      - name: Create deploy env file
-        run: |
-          echo "DEPLOY_IMAGE_TAG=${{ github.sha }}" > scripts/deploy_env.sh
-
-      # Configure AWS credentials
+      # Configure AWS credentials (to refresh ASG instances)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -46,22 +46,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # Create deployment bundle (zip)
-      - name: Create deployment bundle
+      # Trigger instance refresh in Auto Scaling Group
+      - name: Trigger Auto Scaling Group instance refresh
         run: |
-          zip -r deploy.zip appspec.yml scripts/
-
-      # Upload to S3
-      - name: Upload bundle to S3
-        run: |
-          aws s3 cp deploy.zip s3://autoscale-codedeploy-bucket/deploy.zip
-
-      # Trigger CodeDeploy deployment
-      - name: Deploy to EC2 via CodeDeploy
-        run: |
-          aws deploy create-deployment \
-            --application-name autoscale-app \
-            --deployment-group-name project-autoscale-dg-new \
-            --s3-location bucket=autoscale-codedeploy-bucket,key=deploy.zip,bundleType=zip \
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name project-autoscale-asg \
+            --strategy Rolling \
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}' \
             --region us-east-1
+
+      # Confirm rollout
+      - name: Log rollout initiation
+        run: echo "✅ Deployment triggered — new instances will pull latest Docker image on startup."
 
