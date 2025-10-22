@@ -57,5 +57,6 @@ jobs:
 
       # Confirm rollout
       - name: Log rollout initiation
-        run: echo "✅ Deployment triggered — new instances will pull latest Docker image on startup."
+        run: echo "✅ Deployment triggered — new instances will pull latest Docker image on startup"
+
 
