@@ -18,5 +18,5 @@ docker rm -f project-autoscale || true
 
 # Pull and run new container
 docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
-docker run -d --name project-autoscale -p 8080:8080 --restart=always "${IMAGE_NAME}:${IMAGE_TAG}"
+# docker run -d --name project-autoscale -p 8080:8080 --restart=always "${IMAGE_NAME}:${IMAGE_TAG}"
 
