@@ -65,7 +65,7 @@ cd autoscaing-project
 - This pulls your backend project onto the EC2 instance.
 
 
-## Step 4: Prepare the IAM Roles(Instance Role)
+## Step 4: Prepare the IAM Roles (EC2 Instance Role)
 
 ### 1. EC2CodeDeployRole
 
@@ -129,7 +129,26 @@ cd autoscaing-project
 
 ```
 
-## **Step 5: Create an AMI from the instance (Console)**
+![[Pasted image 20251024184102.png]]
+
+
+## **Step 5: Build the image in your instance**
+
+
+1. In Ec2 instance, run 
+
+```
+docker build -t youruser/your-project-name:latest .
+```
+
+2. Optionally: Run the image as well
+   
+```
+docker run -d -p 8080:8080 youruser/project-autoscale
+```
+^^ Example
+
+## **Step 6: Create an AMI from the instance (Console)**
 
 1. In **AWS Console → EC2 → Instances**, select your instance.
     
@@ -145,7 +164,7 @@ Click **Create Image** and wait until the AMI status is `Available`.
 **Why:** This AMI will be used in the Launch Template so new instances start pre-configured with Docker and your image.
 
 
-## **Step 6: Create a Launch Template and attach the AMI and Role**
+## **Step 7: Create a Launch Template and attach the AMI and Role**
 
 1. Go to **EC2 → Launch Templates → Create Launch Template**.
     
@@ -171,7 +190,7 @@ sudo docker run -d -p 8080:8080 --name app haideralvii/project-autoscale
 
 ```
 
-## **Step 7: Create a Target Group**
+## **Step 8: Create a Target Group**
 
 1. Go to **EC2 → Target Groups → Create Target Group**.
     
@@ -191,7 +210,7 @@ sudo docker run -d -p 8080:8080 --name app haideralvii/project-autoscale
 
 ---
 
-## **Step 8: Create a Load Balancer**
+## **Step 9: Create a Load Balancer**
 
 1. Go to **EC2 → Load Balancers → Create Load Balancer → Application Load Balancer**.
     
@@ -215,7 +234,7 @@ sudo docker run -d -p 8080:8080 --name app haideralvii/project-autoscale
 
 ---
 
-## **Step 9: Create an Auto Scaling Group and attach everything**
+## **Step 10: Create an Auto Scaling Group and attach everything**
 
 1. Go to **EC2 → Auto Scaling Groups → Create Auto Scaling Group**.
     
@@ -241,7 +260,7 @@ Now we set up CodeDeploy and GitHub Actions to automate deploys.
 
 ---
 
-## 10) Create CodeDeploy Application
+## 11) Create CodeDeploy Application
 
 1. AWS Console → **CodeDeploy** → **Applications** → **Create application**.
     
@@ -254,7 +273,7 @@ Now we set up CodeDeploy and GitHub Actions to automate deploys.
 
 ---
 
-## 11) Create CodeDeploy Deployment Group
+## 12) Create CodeDeploy Deployment Group
 
 1. In your CodeDeploy Application → **Create deployment group**.
     
@@ -279,7 +298,7 @@ Now we set up CodeDeploy and GitHub Actions to automate deploys.
 
 ---
 
-## 12) Prepare your app revision (appspec + scripts)
+## 13) Prepare your app revision (appspec + scripts)
 
 Your repo should contain an `appspec.yml` at the root, and a `/scripts` folder with the lifecycle scripts. Below is a recommended example for Docker container deployments to EC2 via CodeDeploy.
 
@@ -363,7 +382,7 @@ docker system prune -f || true
 
 ---
 
-## 13) GitHub Actions workflow (CI → build image → push → package revision → upload to S3 → create CodeDeploy deployment)
+## 14) GitHub Actions workflow (CI → build image → push → package revision → upload to S3 → create CodeDeploy deployment)
 
 Place `.github/workflows/deploy.yml` in your repo:
 
@@ -450,7 +469,7 @@ jobs:
 
 ---
 
-## 14) Final deploy (triggering)
+## 15) Final deploy (triggering)
 
 1. Push changes to `main` → the GitHub Actions workflow builds the image, pushes to Docker Hub, uploads the revision to S3, and issues the `aws deploy create-deployment` command.
     
