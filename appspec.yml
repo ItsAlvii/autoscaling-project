@@ -3,7 +3,7 @@ os: linux
 
 files:
   - source: /
-    destination: /home/ubuntu/autoscaling-project
+    destination: /home/ubuntu/autoscaing-project
 
 hooks:
   ApplicationStop:
