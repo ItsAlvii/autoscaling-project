@@ -12,7 +12,7 @@ const instanceID = Math.floor(Math.random() * 1000000);
 
 app.get("/", (req, res) => {
   res.send(`
-    Server application is running inside Docker on port 8080 🚀 <br>
+    Server is running inside Docker on port 8080 🚀 <br>
     Unique instance ID: ${instanceID} <br>
     Container hostname: ${hostname}
   `);
