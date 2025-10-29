@@ -1,21 +1,15 @@
 version: 0.0
 os: linux
-
 files:
   - source: /
     destination: /home/ubuntu/autoscaing-project
-
 hooks:
-  ApplicationStop:
-    - location: scripts/stop_container.sh
-      timeout: 60
-      runas: root
   BeforeInstall:
     - location: scripts/cleanup.sh
-      timeout: 60
+      timeout: 180
       runas: root
-  ApplicationStart:
-    - location: scripts/start_container.sh
+  AfterInstall:
+    - location: scripts/deploy_image.sh
       timeout: 300
       runas: root
 

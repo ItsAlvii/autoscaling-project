@@ -1,4 +1,4 @@
-name: Build, Push, and Deploy via AutoScaling
+name: Build, Push, and Deploy
 
 on:
   push:
@@ -10,52 +10,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3️⃣ Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4️⃣ Build and push Docker image
-      - name: Build and push Docker image
-        env:
-          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
+      - name: Build and Push Docker image
         run: |
-          IMAGE_TAG=${{ github.sha }}
-          echo "Building Docker image: $IMAGE_NAME:$IMAGE_TAG"
-          docker build -t $IMAGE_NAME:$IMAGE_TAG .
-          docker push $IMAGE_NAME:$IMAGE_TAG
-          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:latest
-          echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > deploy_env.sh
+          IMAGE_TAG=${GITHUB_SHA::7}
+          docker build -t haideralvii/project-autoscale:$IMAGE_TAG -t haideralvii/project-autoscale:latest .
+          docker push haideralvii/project-autoscale:$IMAGE_TAG
+          docker push haideralvii/project-autoscale:latest
+          echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > scripts/deploy_env.sh
 
-      # 5️⃣ Configure AWS credentials (directly)
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      # 6️⃣ Trigger CodeDeploy deployment
-      - name: Trigger CodeDeploy deployment
+      - name: Zip deployment bundle
         run: |
-          echo "Triggering CodeDeploy deployment..."
+          zip -r deploy.zip appspec.yml scripts/
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp deploy.zip s3://project-autoscale-bucket/deploy-${GITHUB_SHA::7}.zip --region ap-south-1
+
+      - name: Create CodeDeploy deployment
+        run: |
           aws deploy create-deployment \
-            --application-name autoscale-app \
-            --deployment-group-name project-autoscale-dg-new \
-            --github-location repository=${{ github.repository }},commitId=${{ github.sha }}
-
-      # 7️⃣ Log deployment
-      - name: Log deployment
-        run: echo "✅ Deployment triggered — ASG instances will pull the latest Docker image on startup."
+            --application-name autoscaing-app \
+            --deployment-group-name autoscaing-deploy-group \
+            --s3-location bucket=project-autoscale-bucket,key=deploy-${GITHUB_SHA::7}.zip,bundleType=zip \
+            --region ap-south-1 \
+            --description "GitHub Actions Deploy - ${GITHUB_SHA::7}"
 
