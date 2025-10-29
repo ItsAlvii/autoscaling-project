@@ -50,7 +50,7 @@ jobs:
           aws deploy create-deployment \
             --application-name autoscale-app \
             --deployment-group-name project-autoscale-dg-new \
-            --s3-location bucket=project-autoscale-bucket,key=deploy-${GITHUB_SHA::7}.zip,bundleType=zip \
+            --s3-location bucket=project-autoscale-bucket2,key=deploy-${GITHUB_SHA::7}.zip,bundleType=zip \
             --region us-east-1 \
             --description "GitHub Actions Deploy - ${GITHUB_SHA::7}"
 
