@@ -1,7 +1,7 @@
 name: Build, Push, and Deploy
 
 on:
-[?12;2$y  push:
+  push:
     branches:
       - main
 
