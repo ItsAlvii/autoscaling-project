@@ -45,7 +45,7 @@ jobs:
       - name: Create CodeDeploy deployment
         run: |
           aws deploy create-deployment \
-            --application-name autoscaing-app \
+            --application-name autoscale-app \
             --deployment-group-name autoscaing-deploy-group \
             --s3-location bucket=project-autoscale-bucket,key=deploy-${GITHUB_SHA::7}.zip,bundleType=zip \
             --region ap-south-1 \
