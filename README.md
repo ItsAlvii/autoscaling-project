@@ -1,26 +1,45 @@
 
-## **Step 1: Launch an EC2 instance**
+# 🚀 **End-to-End CI/CD Auto Scaling Deployment on AWS (EC2 + CodeDeploy + GitHub Actions)**
 
-- Go to **AWS Console → EC2 → Launch Instance**.
+This guide demonstrates how to deploy a Dockerized backend application on AWS using **EC2 Auto Scaling**, **Application Load Balancer (ALB)**, **CodeDeploy**, and **GitHub Actions** for continuous integration and deployment.
+
+It follows a **real-world, production-ready pattern** where:
+
+- A base EC2 instance is prepared with Docker and CodeDeploy agent.
     
-- Choose an Ubuntu AMI (e.g., 22.04 LTS).
+- The image is **built and run** directly on EC2 (ensuring it works).
     
-- Select an instance type (e.g., `t2.micro`).
+- An **AMI is created** from that preconfigured instance.
     
-- Assign a **security group** that allows:
+- CodeDeploy + GitHub Actions handle future automated updates via **S3-based revision deployments**.
     
-    - SSH from your IP
+
+> ⚙️ _Replace placeholders like `your-username`, `your-s3-bucket-name`, etc. with your actual values._
+
+---
+
+## **Step 1: Launch an EC2 Instance**
+
+1. Go to **AWS Console → EC2 → Launch Instance**
+    
+2. Choose an Ubuntu AMI (e.g., **Ubuntu 22.04 LTS**)
+    
+3. Instance type: `t2.micro` (or higher if needed)
+    
+4. Configure a **security group** that allows:
+    
+    - SSH (port 22) from your IP
         
-    - Incoming traffic on the app port (8080) from your ALB later
+    - HTTP (port 8080) for app traffic
         
-- Launch the instance and note its public IP.
+5. Launch the instance and note its **public IP address**
     
 
 ---
 
-## **Step 2: Run update commands**
+## **Step 2: Install Dependencies and CodeDeploy Agent**
 
-SSH into the instance and update packages:
+SSH into the instance:
 
 ```
 sudo apt-get update
@@ -44,49 +63,69 @@ sudo ./install auto
 sudo systemctl start codedeploy-agent
 sudo systemctl enable codedeploy-agent
 sudo systemctl status codedeploy-agent
-
 ```
-
-
-
-
-- This ensures the system is up-to-date and Docker is installed and running.
-    
 
 ---
 
-## **Step 3: Clone the GitHub repository**
+## **Step 3: Clone the Repository**
+
+`git clone https://github.com/your-username/autoscaing.git cd autoscaing`
+
+> 🔸 Note: Replace `autoscaing` with whatever name appears when you clone your repository.
+
+---
+
+## **Step 4: Prepare IAM Roles**
+
+### 1. **EC2 Instance Role (e.g., `EC2CodeDeployRole`)**
+
+- Go to **IAM → Roles → Create role**
+    
+- Trusted entity: **EC2**
+    
+- Attach policies:
+    
+    - `AmazonEC2RoleforAWSCodeDeploy`
+        
+    - `AmazonSSMManagedInstanceCore`
+        
+- Name it `EC2CodeDeployRole`
+    
+Attach an inline policy to allow it to use S3
 
 ```
-git clone https://github.com/ItsAlvii/autoscaing-project.git
-cd autoscaing-project
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CodeDeployS3Access",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<your-s3-bucket-name>",
+        "arn:aws:s3:::<your-s3-bucket-name>/*"
+      ]
+    }
+  ]
+}
+
 ```
+### 2. **CodeDeploy Service Role (e.g., `CodeDeployServiceRole`)**
 
-- This pulls your backend project onto the EC2 instance.
+- Go to **IAM → Roles → Create role**
+    
+- Trusted entity: **CodeDeploy**
+    
+- Attach managed policy: `AWSCodeDeployRole`
+    
+- Add the following **inline policy**:
+    
 
-
-## Step 4: Prepare the IAM Roles (EC2 Instance Role)
-
-### 1. EC2CodeDeployRole
-
-1. Go To AWS > **IAM** > **Roles**
-
-2. Create IAM Role: `EC2CodeDeployRole`
-
-3. Attach managed policy: `AWSCodeDeployRole` (or custom policy allowing `codedeploy:*`, S3 access, CloudWatch logs)
- 
-4. Attach this role to your **launch template** used by the ASG (We will do this in the next step dont worry)
-
-### 2. AWSCodeDeployRole
-
-1. Go To AWS > **IAM** > **Roles**
-
-2. Create IAM Role: AWSCodeDeployRole
-
-3. Attach this inline policy to it
-   
 ```
-
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -119,275 +158,263 @@ cd autoscaing-project
         "sns:ListTopics",
         "sns:Publish",
         "iam:ListRoles",
-        "iam:PassRole"
+        "iam:PassRole",
+        "codedeploy:*",
+        "s3:Get*",
+        "s3:List*",
+        "logs:*"
       ],
       "Resource": "*"
     }
   ]
 }
-
-
 ```
 
-![[Pasted image 20251024184102.png]]
+---
 
+## **Step 5: Build and Run the Docker Image (on EC2)**
 
-## **Step 5: Build the image in your instance**
+From inside `/home/ubuntu/autoscaing`:
 
+`docker build -t your-username/your-project-name:latest . docker run -d -p 8080:8080 your-username/your-project-name`
 
-1. In Ec2 instance, run 
+> ✅ **Tip:** Make sure the container runs successfully before creating an AMI.  
+> This ensures your base AMI always launches with a working environment.
 
-```
-docker build -t youruser/your-project-name:latest .
-```
+---
 
-2. Optionally: Run the image as well
-   
-```
-docker run -d -p 8080:8080 youruser/project-autoscale
-```
-^^ Example
+## **Step 6: Configure `systemd` for Auto-Start**
 
-## **Step 6: Create an AMI from the instance (Console)**
+Create a systemd service so your container auto-starts on boot:
 
-1. In **AWS Console → EC2 → Instances**, select your instance.
-    
-2. Click **Actions → Image → Create Image**.
-    
-3. Name it: `project-autoscale-ami-YYYYMMDD`.
-    
-4. Attach IAM Role you created for EC2 Earlier (EC2CodeDeployRole)
+`sudo nano /etc/systemd/system/autoscaing.service`
 
-
-Click **Create Image** and wait until the AMI status is `Available`.
-
-**Why:** This AMI will be used in the Launch Template so new instances start pre-configured with Docker and your image.
-
-
-## **Step 7: Create a Launch Template and attach the AMI and Role**
-
-1. Go to **EC2 → Launch Templates → Create Launch Template**.
-    
-2. Name it: `project-autoscale-template`.
-    
-3. Select the AMI created in Step 7.
-    
-4. Set the **instance type** (e.g., `t2.micro`).
-    
-5. Attach **security groups** (allow SSH for debugging, app traffic from ALB).
-    
-6. Assign **IAM role** `EC2CodeDeployRole`
-    
-7. Optionally, paste **user-data** to pull the Docker image on boot:
-    
+Paste:
 
 ```
-#!/bin/bash
-cd /home/ubuntu/autoscaing-project
-sudo docker stop app || true
-sudo docker rm app || true
-sudo docker run -d -p 8080:8080 --name app haideralvii/project-autoscale
+[Unit]
+Description=Autoscaling App Container
+After=docker.service
+Requires=docker.service
 
+[Service]
+ExecStart=/usr/bin/docker run --rm -d -p 8080:8080 --name autoscaing your-username/your-project-name:latest
+ExecStop=/usr/bin/docker stop autoscaing
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-## **Step 8: Create a Target Group**
+Then enable and start it:
 
-1. Go to **EC2 → Target Groups → Create Target Group**.
+`sudo systemctl daemon-reload sudo systemctl enable autoscaing sudo systemctl start autoscaing sudo systemctl status autoscaing`
+
+---
+
+## **Step 7: Create an AMI from the Configured Instance**
+
+1. In **AWS Console → EC2 → Instances**
     
-2. Target type: **Instance**.
+2. Select your instance → **Actions → Image → Create Image**
     
-3. Protocol: **HTTP**, Port: `8080` (your app port).
+3. Name it: `autoscaing-ami-YYYYMMDD`
     
-4. VPC: select your app’s VPC.
+4. Attach the `EC2CodeDeployRole` IAM role
     
-5. Health check: path `/` or `/health`.
-    
-6. Click **Create**.
+5. Wait until the AMI status becomes **Available**
     
 
-- **Why:** ALB will forward traffic to this TG, and ASG instances will register here.
+> 🎯 _Why:_ This AMI ensures all future Auto Scaling instances come preconfigured with Docker, CodeDeploy, and your running app.
+
+---
+
+## **Step 8: Create Launch Template**
+
+1. Go to **EC2 → Launch Templates → Create Template**
+    
+2. Name: `autoscaing-template`
+    
+3. Select your AMI
+    
+4. Instance type: `t2.micro`
+    
+5. Security groups: same as before
+    
+6. Attach IAM Role: `EC2CodeDeployRole`
+    
+7. No user data (we’re using `systemd`)
     
 
 ---
 
-## **Step 9: Create a Load Balancer**
+## **Step 9: Create Target Group and Load Balancer**
 
-1. Go to **EC2 → Load Balancers → Create Load Balancer → Application Load Balancer**.
+### **Target Group**
+
+- **Type:** Instance
     
-2. Name: `project-autoscale-alb`.
+- **Protocol:** HTTP
     
-3. Scheme: **Internet-facing**.
+- **Port:** 8080
     
-4. Listeners: HTTP port 80.
+- **Health check path:** `/`
     
-5. Select **Availability Zones**.
-    
-6. Security group: attach ALB SG (allows 80 from anywhere).
-    
-7. Routing: attach the **Target Group** created in Step 9.
-    
-8. Click **Create**.
+- Click **Create**
     
 
-- **Why:** ALB balances incoming traffic and routes it to healthy instances in the TG.
-    
+### **Load Balancer**
 
----
-
-## **Step 10: Create an Auto Scaling Group and attach everything**
-
-1. Go to **EC2 → Auto Scaling Groups → Create Auto Scaling Group**.
+- **Type:** Application Load Balancer
     
-2. Name: `project-autoscale-asg`.
+- Scheme: Internet-facing
     
-3. Select the **Launch Template** created in Step 8.
+- Listener: Port 80 → Forward to Target Group
     
-4. VPC and subnets: choose multiple AZs for HA.
+- Attach ALB Security Group
     
-5. Attach to the **ALB / Target Group** from Step 9 & 10.
-    
-6. Set min/desired/max instances (e.g., 1/1/3).
-    
-7. Configure scaling policies if needed.
-    
-8. Click **Create ASG**.
-   
-
-
-# CODEDEPLOY SETUP & CD PIPELINE
-
-Now we set up CodeDeploy and GitHub Actions to automate deploys.
-
----
-
-## 11) Create CodeDeploy Application
-
-1. AWS Console → **CodeDeploy** → **Applications** → **Create application**.
-    
-2. Name: `project-autoscale-app`.
-    
-3. Compute platform: **EC2/On-Premises**.
-    
-4. Create.
+- Click **Create**
     
 
 ---
 
-## 12) Create CodeDeploy Deployment Group
+## **Step 10: Create Auto Scaling Group**
 
-1. In your CodeDeploy Application → **Create deployment group**.
+1. Go to **EC2 → Auto Scaling Groups → Create**
     
-2. Name: `project-autoscale-dg`.
+2. Name: `autoscaing-asg`
     
-3. Service role: select `CodeDeployServiceRole` (created in step 4.2).
+3. Use the Launch Template from Step 8
     
-4. Deployment type: **Blue/Green for for EC2).
-5. Environment configuration: 
-   
-   Automatically Copy Amazon Ec2 AutoScaling
-   choose **Auto Scaling groups** or choose **EC2 tags**. To attach the ASG:
+4. Select VPC/Subnets
     
-    - Under “Environment configuration”, choose **Auto Scaling groups**, click **Add**, and select your ASG.
-        
-6. Load balancer: choose **Application Load Balancer** and provide the target group (this allows CodeDeploy to manage instance registration/deregistration during deployments).
+5. Attach the Target Group from Step 9
     
-7. Create the Deployment Group.
+6. Set min/desired/max capacity (e.g., 1/1/3)
     
-
-**Note:** CodeDeploy must be able to interact with Auto Scaling to coordinate rollbacks — that's why the service role `AWSCodeDeployRole` is required. [AWS Documentation](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSCodeDeployRole.html?utm_source=chatgpt.com)
+7. Create the ASG
+    
 
 ---
 
-## 13) Prepare your app revision (appspec + scripts)
+## **Step 11: Create S3 Bucket for CodeDeploy Revisions**
 
-Your repo should contain an `appspec.yml` at the root, and a `/scripts` folder with the lifecycle scripts. Below is a recommended example for Docker container deployments to EC2 via CodeDeploy.
+1. Go to **S3 → Create bucket**
+    
+2. Name it `your-s3-bucket-name`
+    
+3. Block public access (keep private)
+    
+4. CodeDeploy and GitHub Actions will upload deployment revisions here
+    
 
-### `appspec.yml` (example)
+---
+
+## **Step 12: Create CodeDeploy Application and Deployment Group**
+
+### **Application**
+
+- **Name:** `autoscaing-app`
+    
+- **Compute platform:** EC2/On-premises
+    
+
+### **Deployment Group**
+
+- **Name:** `autoscaing-dg`
+    
+- **Service Role:** `CodeDeployServiceRole`
+    
+- **Environment configuration:** Auto Scaling group = `autoscaing-asg`
+    
+- **Load balancer:** select your ALB target group
+    
+- **Deployment type:** Blue/Green (recommended)
+    
+
+---
+
+## **Step 13: AppSpec and Lifecycle Scripts**
+
+In your repo root:
+
+**`appspec.yml`**
 
 ```
 version: 0.0
 os: linux
-
 files:
   - source: /
-    destination: /home/ubuntu/autoscaling-project
+    destination: /home/ubuntu/autoscaing-project
 
 hooks:
-  ApplicationStop:
-    - location: scripts/stop_container.sh
-      timeout: 60
-      runas: root
   BeforeInstall:
-    - location: scripts/cleanup.sh
+    - location: scripts/pre_cleanup.sh
       timeout: 60
       runas: root
-  ApplicationStart:
-    - location: scripts/start_container.sh
+  AfterInstall:
+    - location: scripts/deploy_image.sh
       timeout: 300
       runas: root
 ```
 
-(see AWS AppSpec + hooks reference for full details). [AWS Documentation+1](https://docs.aws.amazon.com/codedeploy/latest/userguide/reference-appspec-file-example.html?utm_source=chatgpt.com)
-
-### scripts/stop_container.sh
+deploy_image.sh
 
 ```
 #!/bin/bash
 set -e
 
-# Stop and remove container
-docker stop project-autoscale || true
-docker rm project-autoscale || true
-```
+cd /home/ubuntu/autoscaing-project
 
-### scripts/start_container.sh
-
-```
-#!/bin/bash
-set -e
-
-# Load deployment environment variables (for SHA tag)
-if [ -f /home/ubuntu/autoscaling-project/scripts/deploy_env.sh ]; then
-    source /home/ubuntu/autoscaling-project/scripts/deploy_env.sh
+if [ -f scripts/deploy_env.sh ]; then
+  source scripts/deploy_env.sh
+else
+  echo "⚠️ deploy_env.sh not found, using 'latest' tag."
+  DEPLOY_IMAGE_TAG="latest"
 fi
 
-DOCKERHUB_USERNAME="your_username"
-IMAGE_NAME="${DOCKERHUB_USERNAME}/your_project_name"
-IMAGE_TAG="${DEPLOY_IMAGE_TAG:-latest}"
+IMAGE="haideralvii/project-autoscale:${DEPLOY_IMAGE_TAG}"
 
-# Ensure Docker is running
-systemctl start docker
+echo "🚀 Deploying image: $IMAGE"
 
-# Stop and remove old container if exists
+systemctl start docker || true
+docker pull "$IMAGE"
 docker rm -f project-autoscale || true
+docker run -d --name project-autoscale -p 8080:8080 --restart=always "$IMAGE"
 
-# Pull and run new container
-docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
-# docker run -d --name project-autoscale -p 8080:8080 --restart=always "${IMAGE_NAME}:${IMAGE_TAG}"
+echo "✅ Deployment finished: $IMAGE"
 ```
 
-### scripts/cleanup.sh
+pre_cleanup.sh
 
 ```
 #!/bin/bash
 set -e
 
-# Remove unused Docker resources
-docker system prune -f || true
+echo "Running pre-cleanup before file copy..."
+
+# Stop any running containers (optional)
+sudo docker stop app || true
+sudo docker rm app || true
+
+# Delete old deployment directory to prevent file conflicts
+sudo rm -rf /home/ubuntu/autoscaing-project/* || true
+
+echo "Pre-cleanup complete."
 ```
 
-**Permissions:** `chmod +x scripts/*.sh` and commit them in your repo.
+Make them executable:
 
-**AppSpec notes:** the `hooks` map lifecycle events to scripts. More details in AWS docs. [AWS Documentation](https://docs.aws.amazon.com/codedeploy/latest/userguide/reference-appspec-file-structure-hooks.html?utm_source=chatgpt.com)
+`chmod +x scripts/*.sh`
 
 ---
 
-## 14) GitHub Actions workflow (CI → build image → push → package revision → upload to S3 → create CodeDeploy deployment)
+## **Step 14: GitHub Actions CI/CD Workflow**
 
-Place `.github/workflows/deploy.yml` in your repo:
+Create `.github/workflows/deploy.yml`:
 
 ```
-name: Build, Push, and Deploy via AutoScaling
+name: Build, Push, and Deploy
 
 on:
   push:
@@ -399,35 +426,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3️⃣ Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4️⃣ Build and push Docker image
-      - name: Build and push Docker image
-        env:
-          IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/project-autoscale
+      - name: Build and Push Docker image
         run: |
-          IMAGE_TAG=${{ github.sha }}
-          echo "Building Docker image: $IMAGE_NAME:$IMAGE_TAG"
-          docker build -t $IMAGE_NAME:$IMAGE_TAG .
-          docker push $IMAGE_NAME:$IMAGE_TAG
-          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:latest
-          echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > deploy_env.sh
+          IMAGE_TAG=${GITHUB_SHA::7}
+          docker build -t haideralvii/project-autoscale:$IMAGE_TAG -t haideralvii/project-autoscale:latest .
+          docker push haideralvii/project-autoscale:$IMAGE_TAG
+          docker push haideralvii/project-autoscale:latest
+          echo "DEPLOY_IMAGE_TAG=$IMAGE_TAG" > scripts/deploy_env.sh
 
-      # 5️⃣ Configure AWS credentials (directly)
+      - name: Zip deployment bundle
+        run: |
+          zip -r deploy.zip appspec.yml scripts/
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -435,119 +457,93 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # 6️⃣ Trigger CodeDeploy deployment
-      - name: Trigger CodeDeploy deployment
+      - name: Upload to S3
         run: |
-          echo "Triggering CodeDeploy deployment..."
+          aws s3 cp deploy.zip s3://project-autoscale-bucket2/deploy-${GITHUB_SHA::7}.zip --region us-east-1
+
+      - name: Create CodeDeploy deployment
+        run: |
           aws deploy create-deployment \
             --application-name autoscale-app \
             --deployment-group-name project-autoscale-dg-new \
-            --github-location repository=${{ github.repository }},commitId=${{ github.sha }}
-
-      # 7️⃣ Log deployment
-      - name: Log deployment
-        run: echo "✅ Deployment triggered — ASG instances will pull the latest Docker image on startup."
-
+            --s3-location bucket=project-autoscale-bucket2,key=deploy-${GITHUB_SHA::7}.zip,bundleType=zip \
+            --region us-east-1 \
+            --description "GitHub Actions Deploy - ${GITHUB_SHA::7}"
 ```
 
 **Required GitHub Secrets:**
 
-- `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Docker Hub access token),
+- `DOCKERHUB_USERNAME`
     
-- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`,
+- `DOCKERHUB_TOKEN`
     
-- `S3_BUCKET` (existing S3 bucket for CodeDeploy revisions; create and set proper bucket policy),
+- `AWS_ACCESS_KEY_ID`
     
-- `CODEDEPLOY_APP_NAME` (e.g., `project-autoscale-app`),
+- `AWS_SECRET_ACCESS_KEY`
     
-- `CODEDEPLOY_DEPLOYMENT_GROUP` (e.g., `project-autoscale-dg`).
+- `AWS_REGION`
     
-
-**Optional (better security):** Use GitHub OIDC to avoid long-lived AWS keys (see AWS blog on GitHub Actions integration). [Amazon Web Services, Inc.](https://aws.amazon.com/blogs/devops/integrating-with-github-actions-ci-cd-pipeline-to-deploy-a-web-app-to-amazon-ec2/?utm_source=chatgpt.com)
-
-**Notes about S3 + IAM:** Ensure the CodeDeploy service role and the AWS credentials used by Actions can upload to the S3 bucket and that the `EC2CodeDeployRole` instance profile can read from the S3 bucket (S3 `GetObject` on the specific prefix).
-
----
-
-## 15) Final deploy (triggering)
-
-1. Push changes to `main` → the GitHub Actions workflow builds the image, pushes to Docker Hub, uploads the revision to S3, and issues the `aws deploy create-deployment` command.
-    
-2. CodeDeploy will run the AppSpec hooks on the targeted instances (ASG → instances), invoking `stop_container.sh`, `cleanup.sh`, and `start_container.sh` in order.
-    
-3. Verify in CodeDeploy console: see deployment status, logs, and instance events.
-    
-
-**Troubleshooting tips:**
-
-- If hooks do not run, check `/opt/codedeploy-agent/deployment-root/deployment-logs` and the CodeDeploy agent logs on the instance.
-    
-- Ensure your `appspec.yml` paths match the zip contents exactly.
-    
-- If instance health checks fail in ALB, check container logs and ensure port mapping (8080) is correct.
+- `S3_BUCKET` _(optional if hardcoded in script)_
     
 
 ---
 
-## Helpful checks & commands
+## **Step 15: Trigger the Pipeline**
 
-On an EC2 instance (for debugging):
+Every time you push to `main`, the workflow:
 
-```
-`# Check CodeDeploy agent 
-sudo systemctl status codedeploy-agent sudo tail -n 200 /var/log/aws/codedeploy-agent/codedeploy-agent.log  
-# check latest deployment logs on instance (deployment root) 
-ls -lah /opt/codedeploy-agent/deployment-root`
-```
-
----
-
-## Cleanup plan (if you want to destroy resources after tests)
-
-- Delete the Auto Scaling Group (scale to zero first), delete Launch Template, delete ALB, Target Group, delete AMI, delete snapshots, delete S3 revision bucket (careful), delete CodeDeploy Application & Deployment Group, delete IAM roles (be cautious about used roles).
+1. Builds and pushes a new Docker image
+    
+2. Packages the repo into a `.zip` file
+    
+3. Uploads it to S3
+    
+4. Triggers CodeDeploy → ASG → instance rollout
     
 
----
+Monitor the deployment via:
 
-## Quick checklist (one-page)
-
-1. Launch EC2 instance (build host) → install Docker + CodeDeploy agent.
+- **CodeDeploy Console** (deployment status)
     
-2. Clone repo, build Docker image, test locally.
+- **ALB DNS name** (test your app)
     
-3. Push image to Docker Hub.
-    
-4. Create `EC2CodeDeployRole` (attach `AmazonEC2RoleforAWSCodeDeploy` + `AmazonSSMManagedInstanceCore`). [AWS Documentation+1](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEC2RoleforAWSCodeDeploy.html?utm_source=chatgpt.com)
-    
-5. Create `CodeDeployServiceRole` (attach `AWSCodeDeployRole`). [AWS Documentation](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSCodeDeployRole.html?utm_source=chatgpt.com)
-    
-6. Create AMI from build host.
-    
-7. Create Launch Template (use AMI + instance profile). [AWS Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-launch-template.html?utm_source=chatgpt.com)
-    
-8. Create Target Group → ALB. [AWS Documentation](https://docs.aws.amazon.com/autoscaling/ec2/userguide/attach-load-balancer-asg.html?utm_source=chatgpt.com)
-    
-9. Create Auto Scaling Group using Launch Template & attach TG. [AWS Documentation](https://docs.aws.amazon.com/autoscaling/ec2/userguide/tutorial-ec2-auto-scaling-load-balancer.html?utm_source=chatgpt.com)
-    
-10. Create CodeDeploy App & Deployment Group (attach ASG + ALB).
-    
-11. Add `appspec.yml` + `scripts/*.sh`. (AppSpec hooks docs: see AWS docs.) [AWS Documentation+1](https://docs.aws.amazon.com/codedeploy/latest/userguide/reference-appspec-file-example.html?utm_source=chatgpt.com)
-    
-12. Create GitHub Actions workflow: build, push, zip, upload to S3, `aws deploy create-deployment`. (Consider OIDC instead of long-lived keys.) [Amazon Web Services, Inc.](https://aws.amazon.com/blogs/devops/integrating-with-github-actions-ci-cd-pipeline-to-deploy-a-web-app-to-amazon-ec2/?utm_source=chatgpt.com)
+- **EC2 logs** (`/var/log/aws/codedeploy-agent/`)
     
 
 ---
 
-## References (official, for deeper troubleshooting)
+## **Verification Checklist**
 
-- AppSpec examples & format (hooks + structure). [AWS Documentation+1](https://docs.aws.amazon.com/codedeploy/latest/userguide/reference-appspec-file-example.html?utm_source=chatgpt.com)
+✅ Base EC2 image built and running  
+✅ AMI created successfully  
+✅ Launch Template uses correct AMI + IAM role  
+✅ Auto Scaling + ALB working  
+✅ CodeDeploy agent active  
+✅ GitHub Actions deploys via S3 and triggers CodeDeploy
+
+---
+
+## **Cleanup (Optional)**
+
+If you want to remove all resources after testing:
+
+- Delete ASG, Launch Template, ALB, Target Group
     
-- AmazonEC2RoleforAWSCodeDeploy (what to attach to instances). [AWS Documentation](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEC2RoleforAWSCodeDeploy.html?utm_source=chatgpt.com)
+- Delete AMI and snapshots
     
-- AWSCodeDeployRole (service role for CodeDeploy). [AWS Documentation](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSCodeDeployRole.html?utm_source=chatgpt.com)
+- Delete CodeDeploy app + deployment group
     
-- Launch template creation guide. [AWS Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-launch-template.html?utm_source=chatgpt.com)
+- Delete S3 bucket
     
-- GitHub Actions → CodeDeploy integration patterns (AWS blog). [Amazon Web Services, Inc.](https://aws.amazon.com/blogs/devops/integrating-with-github-actions-ci-cd-pipeline-to-deploy-a-web-app-to-amazon-ec2/?utm_source=chatgpt.com)
+- Delete IAM roles
     
 
+---
+
+## **References**
+
+- [AWS CodeDeploy Documentation](https://docs.aws.amazon.com/codedeploy/)
+    
+- [EC2 Launch Templates](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-launch-template.html)
+    
+- [GitHub Actions + AWS CI/CD Blog](https://aws.amazon.com/blogs/devops/integrating-with-github-actions-ci-cd-pipeline-to-deploy-a-web-app-to-amazon-ec2/)
