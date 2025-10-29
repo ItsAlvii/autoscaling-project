@@ -1,7 +1,7 @@
 name: Build, Push, and Deploy
 
 on:
-  push:
+[?12;2$y  push:
     branches:
       - main
 
@@ -49,7 +49,7 @@ jobs:
         run: |
           aws deploy create-deployment \
             --application-name autoscale-app \
-            --deployment-group-name autoscaing-deploy-group \
+            --deployment-group-name project-autoscale-dg-new \
             --s3-location bucket=project-autoscale-bucket,key=deploy-${GITHUB_SHA::7}.zip,bundleType=zip \
             --region us-east-1 \
             --description "GitHub Actions Deploy - ${GITHUB_SHA::7}"
